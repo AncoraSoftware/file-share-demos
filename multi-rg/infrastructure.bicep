@@ -22,11 +22,88 @@ param storageSubnetAddressPrefix string
 @description('Subnet address prefix for container apps')
 param containerSubnetAddressPrefix string
 
+@description('Container app environment name')
+param containerAppEnvName string
+
 // Variables for unique naming
 var storageAccountName = '${take(replace(toLower(projectName), '-', ''), 10)}sa${take(uniqueString(resourceGroup().id), 8)}'
 var vnetName = '${projectName}-vnet'
 var storageSubnetName = 'storage-subnet'
 var containerSubnetName = 'container-subnet'
+var logAnalyticsWorkspaceName = '${projectName}-loganalytics'
+
+// Log Analytics workspace for container app environment
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+  name: logAnalyticsWorkspaceName
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+// Virtual Network
+resource vnet 'Microsoft.Network/virtualNetworks@2023-04-01' = {
+  name: vnetName
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        vnetAddressPrefix
+      ]
+    }
+  }
+}
+
+// Define storage subnet as a nested resource
+resource storageSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-04-01' = {
+  parent: vnet
+  name: storageSubnetName
+  properties: {
+    addressPrefix: storageSubnetAddressPrefix
+    serviceEndpoints: [
+      {
+        service: 'Microsoft.Storage'
+        locations: [
+          '*'
+        ]
+      }
+    ]
+  }
+}
+
+// Define container subnet as a nested resource
+resource containerSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-04-01' = {
+  parent: vnet
+  name: containerSubnetName
+  properties: {
+    addressPrefix: containerSubnetAddressPrefix
+  }
+  dependsOn: [
+    storageSubnet // Ensure sequential deployment of subnets
+  ]
+}
+
+// Container Apps Environment - conditionally deploy based on existence
+resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' = {
+  name: containerAppEnvName
+  location: location
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalyticsWorkspace.properties.customerId
+        sharedKey: logAnalyticsWorkspace.listKeys().primarySharedKey
+      }
+    }
+    vnetConfiguration: {
+      infrastructureSubnetId: containerSubnet.id
+    }
+    zoneRedundant: false
+  }
+}
 
 // Storage Account
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -42,7 +119,13 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     minimumTlsVersion: 'TLS1_2'
     networkAcls: {
       bypass: 'AzureServices'
-      defaultAction: 'Allow'
+      defaultAction: 'Deny'
+      virtualNetworkRules: [
+        {
+          id: containerSubnet.id
+          action: 'Allow'
+        }
+      ]
     }
   }
 }
@@ -61,47 +144,6 @@ resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-0
     shareQuota: fileShareQuotaInGB
     enabledProtocols: 'SMB'
   }
-}
-
-// Virtual Network
-resource vnet 'Microsoft.Network/virtualNetworks@2023-04-01' = {
-  name: vnetName
-  location: location
-  properties: {
-    addressSpace: {
-      addressPrefixes: [
-        vnetAddressPrefix
-      ]
-    }
-    subnets: [
-      {
-        name: storageSubnetName
-        properties: {
-          addressPrefix: storageSubnetAddressPrefix
-          serviceEndpoints: [
-            {
-              service: 'Microsoft.Storage'
-              locations: [
-                '*'
-              ]
-            }
-          ]
-        }
-      }
-      {
-        name: containerSubnetName
-        properties: {
-          addressPrefix: containerSubnetAddressPrefix
-        }
-      }
-    ]
-  }
-}
-
-// Get references to the subnets for outputs
-resource containerSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-04-01' existing = {
-  name: containerSubnetName
-  parent: vnet
 }
 
 // Outputs

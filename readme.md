@@ -1,4 +1,4 @@
-# Azure File Share mounting demos
+# Azure container app service file share demos
 
 ## Single-resource group deployment 
 
@@ -14,5 +14,5 @@ az deployment group create --resource-group fs-demo-single-rg --template-file si
 Split storage into its own RG to simulate real-world deployment complexities
 
 ```bash
-az deployment sub create --location southcentralus --template-file multi-rg/index.bicep
+az deployment sub create --confirm-with-what-if --location southcentralus --template-file multi-rg/index.bicep
 ```

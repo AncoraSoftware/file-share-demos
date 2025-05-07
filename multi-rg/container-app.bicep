@@ -22,13 +22,11 @@ param storageAccountResourceGroup string
 @description('File share name in the storage account')
 param fileShareName string
 
-@description('Container subnet ID from the infra resource group')
-param containerSubnetId string
-
 // Variables
-var logAnalyticsWorkspaceName = '${projectName}-loganalytics'
+
 var managedIdentityName = '${projectName}-mi'
 var storageFileShareMountName = 'fileshare-mount'
+var containerAppEnvironmentId = resourceId('Microsoft.App/managedEnvironments', containerAppEnvName)
 
 // Resource references
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
@@ -36,56 +34,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing 
   scope: resourceGroup(storageAccountResourceGroup)
 }
 
-// Log Analytics workspace for container app environment
-resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
-  name: logAnalyticsWorkspaceName
-  location: location
-  properties: {
-    sku: {
-      name: 'PerGB2018'
-    }
-    retentionInDays: 30
-  }
-}
-
 // User-assigned managed identity for container app
 resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: managedIdentityName
   location: location
-}
-
-// Check if Container App Environment already exists
-resource existingContainerAppEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' existing = {
-  name: containerAppEnvName
-}
-
-// Check if the environment exists
-var containerAppEnvironmentExists = length(existingContainerAppEnvironment.?id ?? '') > 0
-
-// Get Log Analytics shared key properly
-var logAnalyticsSharedKey = logAnalyticsWorkspace.listKeys().primarySharedKey
-
-// Get Storage account key properly  
-var storageAccountKey = storageAccount.listKeys().keys[0].value
-
-// Container Apps Environment - conditionally deploy based on existence
-resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' = {
-  name: containerAppEnvName
-  location: location
-  properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalyticsWorkspace.properties.customerId
-        sharedKey: logAnalyticsSharedKey
-      }
-    }
-    // Only include vnetConfiguration for new deployments
-    vnetConfiguration: containerAppEnvironmentExists ? null : {
-      infrastructureSubnetId: containerSubnetId
-    }
-    zoneRedundant: false
-  }
 }
 
 // Container App
@@ -99,7 +51,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
     }
   }
   properties: {
-    environmentId: containerAppEnvironment.id
+    environmentId: containerAppEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
@@ -147,17 +99,27 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
 // Storage volume configuration for container app
 // This uses the storage account from the infra resource group
 resource containerAppStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
-  name: storageFileShareMountName
-  parent: containerAppEnvironment
+  name: '${containerAppEnvName}/${storageFileShareMountName}'
   properties: {
     azureFile: {
       accountName: storageAccount.name
-      accountKey: storageAccountKey
+      accountKey: storageAccount.listKeys().keys[0].value
       shareName: fileShareName
       accessMode: 'ReadWrite'
     }
   }
 }
+
+// Storage account role assignment
+// resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+//     name: guid(resourceGroup().id, storageAccount.id, managedIdentity.id, smbShareContributorRoleDefinitionId)
+//     scope: storageAccount
+//     properties: {
+//       roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', smbShareContributorRoleDefinitionId)
+//       principalId: managedIdentity.properties.principalId
+//       principalType: 'ServicePrincipal'
+//     }
+//   }
 
 // Outputs
 output containerAppFQDN string = containerApp.properties.configuration.ingress.fqdn

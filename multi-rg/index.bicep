@@ -50,6 +50,7 @@ module infraModule 'infrastructure.bicep' = {
   name: 'infraDeployment'
   scope: infraResourceGroup
   params: {
+    containerAppEnvName: containerAppEnvName
     projectName: projectName
     location: location
     storageAccountSku: storageAccountSku
@@ -66,27 +67,14 @@ module containerAppModule 'container-app.bicep' = {
   name: 'containerAppDeployment'
   scope: appResourceGroup
   params: {
+    containerAppEnvName: containerAppEnvName
     projectName: projectName
     location: location
-    containerAppEnvName: containerAppEnvName
     containerAppName: containerAppName
     containerImage: containerImage
     storageAccountName: infraModule.outputs.storageAccountName
     storageAccountResourceGroup: infraResourceGroup.name
     fileShareName: infraModule.outputs.fileShareName
-    containerSubnetId: infraModule.outputs.containerSubnetId
-  }
-}
-
-// Deploy role assignment module to the infra resource group
-// This allows the container app's managed identity to access the storage account
-module roleAssignmentModule 'role-assignment.bicep' = {
-  name: 'roleAssignmentDeployment'
-  scope: infraResourceGroup
-  params: {
-    principalId: containerAppModule.outputs.managedIdentityPrincipalId
-    storageAccountName: infraModule.outputs.storageAccountName
-    storageAccountId: infraModule.outputs.storageAccountId
   }
 }
 
