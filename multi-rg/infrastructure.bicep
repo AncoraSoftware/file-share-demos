@@ -54,36 +54,29 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-04-01' = {
         vnetAddressPrefix
       ]
     }
-  }
-}
-
-// Define storage subnet as a nested resource
-resource storageSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-04-01' = {
-  parent: vnet
-  name: storageSubnetName
-  properties: {
-    addressPrefix: storageSubnetAddressPrefix
-    serviceEndpoints: [
+    subnets: [
       {
-        service: 'Microsoft.Storage'
-        locations: [
-          '*'
-        ]
+        name: storageSubnetName
+        properties: {
+          addressPrefix: storageSubnetAddressPrefix
+          serviceEndpoints: [
+            {
+              service: 'Microsoft.Storage'
+              locations: [
+                '*'
+              ]
+            }
+          ]
+        }
+      }
+      {
+        name: containerSubnetName
+        properties: {
+          addressPrefix: containerSubnetAddressPrefix
+        }
       }
     ]
   }
-}
-
-// Define container subnet as a nested resource
-resource containerSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-04-01' = {
-  parent: vnet
-  name: containerSubnetName
-  properties: {
-    addressPrefix: containerSubnetAddressPrefix
-  }
-  dependsOn: [
-    storageSubnet // Ensure sequential deployment of subnets
-  ]
 }
 
 // Container Apps Environment - conditionally deploy based on existence
@@ -99,13 +92,13 @@ resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' 
       }
     }
     vnetConfiguration: {
-      infrastructureSubnetId: containerSubnet.id
+      infrastructureSubnetId: '${vnet.id}/subnets/${containerSubnetName}'
     }
     zoneRedundant: false
   }
 }
 
-// Storage Account
+// Storage Account with explicit dependency on subnet
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location
@@ -122,7 +115,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
       defaultAction: 'Deny'
       virtualNetworkRules: [
         {
-          id: containerSubnet.id
+          id: '${vnet.id}/subnets/${containerSubnetName}'
           action: 'Allow'
         }
       ]
@@ -153,4 +146,3 @@ output fileShareName string = fileShare.name
 output fileShareId string = fileShare.id
 output vnetName string = vnet.name
 output vnetId string = vnet.id
-output containerSubnetId string = containerSubnet.id
