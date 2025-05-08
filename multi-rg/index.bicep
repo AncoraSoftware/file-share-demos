@@ -34,28 +34,38 @@ param containerAppName string = '${projectName}-app'
 param containerImage string = 'nginx:latest'
 
 // Resource group for infrastructure resources (storage, networking)
-resource infraResourceGroup 'Microsoft.Resources/resourceGroups@2022-09-01' = {
-  name: '${projectName}-infra-rg'
+resource mainResourceGroup 'Microsoft.Resources/resourceGroups@2022-09-01' = {
+  name: '${projectName}-main-rg'
   location: location
 }
 
 // Resource group for container app and related resources
-resource appResourceGroup 'Microsoft.Resources/resourceGroups@2022-09-01' = {
-  name: '${projectName}-app-rg'
+resource storageResourceGroup 'Microsoft.Resources/resourceGroups@2022-09-01' = {
+  name: '${projectName}-storage-rg'
   location: location
 }
 
-// Deploy infrastructure module (storage account, vnet)
-module infraModule 'infrastructure.bicep' = {
-  name: 'infraDeployment'
-  scope: infraResourceGroup
+// Deploy shared storage module
+module storageModule 'shared-storage.bicep' = {
+    name: 'sharedStorageDeployment'
+    scope: storageResourceGroup
+    params: {
+      projectName: projectName
+      location: location
+      storageAccountSku: storageAccountSku
+      fileShareName: fileShareName
+      fileShareQuotaInGB: fileShareQuotaInGB
+      containerSubnetId: infraModule.outputs.containerSubnetId
+    }
+  }
+
+// Deploy shared infrastructure module (vnet, log analytics)
+module infraModule 'shared-infrastructure.bicep' = {
+  name: 'sharedInfra'
+  scope: mainResourceGroup
   params: {
-    containerAppEnvName: containerAppEnvName
     projectName: projectName
     location: location
-    storageAccountSku: storageAccountSku
-    fileShareName: fileShareName
-    fileShareQuotaInGB: fileShareQuotaInGB
     vnetAddressPrefix: vnetAddressPrefix
     storageSubnetAddressPrefix: storageSubnetAddressPrefix
     containerSubnetAddressPrefix: containerSubnetAddressPrefix
@@ -63,26 +73,38 @@ module infraModule 'infrastructure.bicep' = {
 }
 
 // Deploy container app module
-module containerAppModule 'container-app.bicep' = {
+module containerAppModule 'container-apps.bicep' = {
   name: 'containerAppDeployment'
-  scope: appResourceGroup
+  scope: mainResourceGroup
   params: {
-    containerAppEnvName: containerAppEnvName
     projectName: projectName
     location: location
     containerAppName: containerAppName
+    containerAppEnvName: containerAppEnvName
     containerImage: containerImage
-    storageAccountName: infraModule.outputs.storageAccountName
-    storageAccountResourceGroup: infraResourceGroup.name
-    fileShareName: infraModule.outputs.fileShareName
+    containerSubnetId: infraModule.outputs.containerSubnetId
+    logAnalyticsWorkspaceId: infraModule.outputs.logAnalyticsWorkspaceId
+    storageAccountId: storageModule.outputs.storageAccountId
+    fileShareName: storageModule.outputs.fileShareName
   }
 }
 
+// module uploadFileShareData 'upload-file-share-data.bicep' = {
+//   name: 'uploadFileShareData'
+//   scope: storageResourceGroup
+//   params: {
+//     projectName: projectName
+//     location: location
+//     storageAccountName: storageModule.outputs.storageAccountName
+//     fileShareName: storageModule.outputs.fileShareName
+//   }
+// }
+
 // Outputs
-output storageAccountName string = infraModule.outputs.storageAccountName
-output fileShareName string = infraModule.outputs.fileShareName
+output storageAccountName string = storageModule.outputs.storageAccountName
+output fileShareName string = storageModule.outputs.fileShareName
 output vnetName string = infraModule.outputs.vnetName
 output containerAppFQDN string = containerAppModule.outputs.containerAppFQDN
 output containerAppURL string = containerAppModule.outputs.containerAppURL
-output infraResourceGroupName string = infraResourceGroup.name
-output appResourceGroupName string = appResourceGroup.name
+output storageResourceGroupName string = storageResourceGroup.name
+output mainResourceGroupName string = mainResourceGroup.name

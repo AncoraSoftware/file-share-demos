@@ -13,31 +13,46 @@ param containerAppName string
 @description('Container image to deploy')
 param containerImage string
 
-@description('Storage account name from the infra resource group')
-param storageAccountName string
-
-@description('Resource group name where storage account is deployed')
-param storageAccountResourceGroup string
+@description('Storage account resource ID')
+param storageAccountId string
 
 @description('File share name in the storage account')
 param fileShareName string
 
-// Variables
+@description('Container subnet ID for the container app environment')
+param containerSubnetId string 
 
+@description('Log Analytics Workspace ID')
+param logAnalyticsWorkspaceId string
+
+// Variables
 var managedIdentityName = '${projectName}-mi'
 var storageFileShareMountName = 'fileshare-mount'
-var containerAppEnvironmentId = resourceId('Microsoft.App/managedEnvironments', containerAppEnvName)
-
-// Resource references
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
-  name: storageAccountName
-  scope: resourceGroup(storageAccountResourceGroup)
-}
+var storageAccountName = last(split(storageAccountId, '/'))
 
 // User-assigned managed identity for container app
 resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: managedIdentityName
   location: location
+}
+
+// Container App Environment
+resource containerAppEnvironment 'Microsoft.App/managedEnvironments@2023-05-01' = {
+  name: containerAppEnvName
+  location: location
+  properties: {
+    vnetConfiguration: {
+      infrastructureSubnetId: containerSubnetId
+    }
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: reference(logAnalyticsWorkspaceId, '2022-10-01').customerId
+        sharedKey: listKeys(logAnalyticsWorkspaceId, '2022-10-01').primarySharedKey
+      }
+    }
+    zoneRedundant: false
+  }
 }
 
 // Container App
@@ -51,7 +66,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
     }
   }
   properties: {
-    environmentId: containerAppEnvironmentId
+    environmentId: containerAppEnvironment.id
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
@@ -94,34 +109,26 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
       ]
     }
   }
+  dependsOn: [
+    containerAppStorage
+  ]
 }
 
 // Storage volume configuration for container app
-// This uses the storage account from the infra resource group
 resource containerAppStorage 'Microsoft.App/managedEnvironments/storages@2023-05-01' = {
-  name: '${containerAppEnvName}/${storageFileShareMountName}'
+  name: '${containerAppEnvironment.name}/${storageFileShareMountName}'
   properties: {
     azureFile: {
-      accountName: storageAccount.name
-      accountKey: storageAccount.listKeys().keys[0].value
+      accountName: storageAccountName
+      accountKey: listKeys(storageAccountId, '2023-01-01').keys[0].value
       shareName: fileShareName
       accessMode: 'ReadWrite'
     }
   }
 }
 
-// Storage account role assignment
-// resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-//     name: guid(resourceGroup().id, storageAccount.id, managedIdentity.id, smbShareContributorRoleDefinitionId)
-//     scope: storageAccount
-//     properties: {
-//       roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', smbShareContributorRoleDefinitionId)
-//       principalId: managedIdentity.properties.principalId
-//       principalType: 'ServicePrincipal'
-//     }
-//   }
-
 // Outputs
 output containerAppFQDN string = containerApp.properties.configuration.ingress.fqdn
 output containerAppURL string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output containerAppEnvironmentId string = containerAppEnvironment.id
 output managedIdentityPrincipalId string = managedIdentity.properties.principalId
